@@ -131,7 +131,7 @@ static int	input_split(struct input_ctx *);
 static int	input_get(struct input_ctx *, u_int, int, int);
 static void printflike(2, 3) input_reply(struct input_ctx *, const char *, ...);
 static void	input_set_state(struct input_ctx *,
-		    const struct input_transition *);
+				const struct input_transition *);
 static void	input_reset_cell(struct input_ctx *);
 static void	input_report_current_theme(struct input_ctx *);
 static void	input_osc_4(struct input_ctx *, const char *);
@@ -267,7 +267,8 @@ enum input_csi_type {
 	INPUT_CSI_TBC,
 	INPUT_CSI_VPA,
 	INPUT_CSI_WINOPS,
-	INPUT_CSI_XDA
+	INPUT_CSI_XDA,
+	INPUT_CSI_CSIU_QUERY
 };
 
 /* Control (CSI) command table. */
@@ -313,7 +314,8 @@ static const struct input_table_entry input_csi_table[] = {
 	{ 'r', "",  INPUT_CSI_DECSTBM },
 	{ 's', "",  INPUT_CSI_SCP },
 	{ 't', "",  INPUT_CSI_WINOPS },
-	{ 'u', "",  INPUT_CSI_RCP }
+	{ 'u', "",  INPUT_CSI_RCP },
+	{ 'u', "?", INPUT_CSI_CSIU_QUERY }  /* CSI ? u — report current keyboard enhancement status */
 };
 
 /* Input transition. */
@@ -827,7 +829,7 @@ input_restore_state(struct input_ctx *ictx)
 /* Initialise input parser. */
 struct input_ctx *
 input_init(struct window_pane *wp, struct bufferevent *bev,
-    struct colour_palette *palette)
+		struct colour_palette *palette)
 {
 	struct input_ctx	*ictx;
 
@@ -925,13 +927,13 @@ input_parse(struct input_ctx *ictx, u_char *buf, size_t len)
 
 		/* Find the transition. */
 		if (ictx->state != state ||
-		    itr == NULL ||
-		    ictx->ch < itr->first ||
-		    ictx->ch > itr->last) {
+				itr == NULL ||
+				ictx->ch < itr->first ||
+				ictx->ch > itr->last) {
 			itr = ictx->state->transitions;
 			while (itr->first != -1 && itr->last != -1) {
 				if (ictx->ch >= itr->first &&
-				    ictx->ch <= itr->last)
+						ictx->ch <= itr->last)
 					break;
 				itr++;
 			}
@@ -1005,7 +1007,7 @@ input_parse_buffer(struct window_pane *wp, u_char *buf, size_t len)
 		screen_write_start(sctx, &wp->base);
 
 	log_debug("%s: %%%u %s, %zu bytes: %.*s", __func__, wp->id,
-	    ictx->state->name, len, (int)len, buf);
+			ictx->state->name, len, (int)len, buf);
 
 	input_parse(ictx, buf, len);
 	screen_write_stop(sctx);
@@ -1014,7 +1016,7 @@ input_parse_buffer(struct window_pane *wp, u_char *buf, size_t len)
 /* Parse given input for screen. */
 void
 input_parse_screen(struct input_ctx *ictx, struct screen *s,
-    screen_write_init_ctx_cb cb, void *arg, u_char *buf, size_t len)
+		screen_write_init_ctx_cb cb, void *arg, u_char *buf, size_t len)
 {
 	struct screen_write_ctx	*sctx = &ictx->ctx;
 
@@ -1086,7 +1088,7 @@ input_get(struct input_ctx *ictx, u_int validx, int minval, int defval)
 	int			 retval;
 
 	if (validx >= ictx->param_list_len)
-	    return (defval);
+			return (defval);
 	ip = &ictx->param_list[validx];
 	if (ip->type == INPUT_MISSING)
 		return (defval);
@@ -1265,8 +1267,8 @@ input_c0_dispatch(struct input_ctx *ictx)
 			if (!has_content) {
 				grid_get_cell(s->grid, cx, line, &gc);
 				if (gc.data.size != 1 ||
-				    *gc.data.data != ' ' ||
-				    !grid_cells_look_equal(&gc, &first_gc))
+						*gc.data.data != ' ' ||
+						!grid_cells_look_equal(&gc, &first_gc))
 					has_content = 1;
 			}
 			cx++;
@@ -1321,7 +1323,7 @@ input_esc_dispatch(struct input_ctx *ictx)
 	log_debug("%s: '%c', %s", __func__, ictx->ch, ictx->interm_buf);
 
 	entry = bsearch(ictx, input_esc_table, nitems(input_esc_table),
-	    sizeof input_esc_table[0], input_table_compare);
+			sizeof input_esc_table[0], input_table_compare);
 	if (entry == NULL) {
 		log_debug("%s: unknown '%c'", __func__, ictx->ch);
 		return (0);
@@ -1398,13 +1400,13 @@ input_csi_dispatch(struct input_ctx *ictx)
 		return (0);
 
 	log_debug("%s: '%c' \"%s\" \"%s\"", __func__, ictx->ch,
-	    ictx->interm_buf, ictx->param_buf);
+			ictx->interm_buf, ictx->param_buf);
 
 	if (input_split(ictx) != 0)
 		return (0);
 
 	entry = bsearch(ictx, input_csi_table, nitems(input_csi_table),
-	    sizeof input_csi_table[0], input_table_compare);
+			sizeof input_csi_table[0], input_table_compare);
 	if (entry == NULL) {
 		log_debug("%s: unknown '%c'", __func__, ictx->ch);
 		return (0);
@@ -1476,7 +1478,7 @@ input_csi_dispatch(struct input_ctx *ictx)
 		 * request, unless "extended-keys always" forces into mode 1.
 		 */
 		screen_write_mode_clear(sctx,
-		    MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2);
+				MODE_KEYS_EXTENDED|MODE_KEYS_EXTENDED_2);
 		if (options_get_number(global_options, "extended-keys") == 2)
 			screen_write_mode_set(sctx, MODE_KEYS_EXTENDED);
 		break;
@@ -1560,6 +1562,33 @@ input_csi_dispatch(struct input_ctx *ictx)
 		break;
 	case INPUT_CSI_QUERY_PRIVATE:
 		switch (input_get(ictx, 0, 0, 0)) {
+		case 12:  /* cursor blink */
+			/* 1=set(blink), 2=reset(steady) */
+			if (s->mode & MODE_CURSOR_BLINKING_SET) {
+				n = (s->mode & MODE_CURSOR_BLINKING) ? 1 : 2;
+			} else {
+				int opt_ps;
+				if (ictx->wp != NULL)
+					opt_ps = (int)options_get_number(ictx->wp->options, "cursor-style");
+				else
+					opt_ps = (int)options_get_number(global_options, "cursor-style");
+				/* blink for 1,3,5; steady for 0,2,4,6 */
+				n = (opt_ps == 1 || opt_ps == 3 || opt_ps == 5) ? 1 : 2;
+			}
+			input_reply(ictx, "\033[?12;%d$y", n);
+			break;
+		case 2004:  /* bracketed paste */
+			n = (s->mode & MODE_BRACKETPASTE) ? 1 : 2;
+			input_reply(ictx, "\033[?2004;%d$y", n);
+			break;
+		case 1004:  /* focus reporting */
+			n = (s->mode & MODE_FOCUSON) ? 1 : 2;
+			input_reply(ictx, "\033[?1004;%d$y", n);
+			break;
+		case 1006:  /* SGR mouse */
+			n = (s->mode & MODE_MOUSE_SGR) ? 1 : 2;
+			input_reply(ictx, "\033[?1006;%d$y", n);
+			break;
 		case 2031:
 			input_reply(ictx, "\033[?2031;2$y");
 			break;
@@ -1664,6 +1693,27 @@ input_csi_dispatch(struct input_ctx *ictx)
 	case INPUT_CSI_RCP:
 		input_restore_state(ictx);
 		break;
+	case INPUT_CSI_CSIU_QUERY:
+		/*
+		 * Keyboard Enhancement Protocol (CSI u) query:
+		 *   Query:    CSI ? u
+		 *   Replies:  CSI ? 0 u              (unsupported)
+		 *             CSI ? 1 u              (supported: disambiguate)
+		 *             CSI ? 1 ; 2 u          (supported: + alternate keys)
+		 *
+		 * Reflect tmux's current key modes. These are controlled by
+		 * INPUT_CSI_MODSET / INPUT_CSI_MODOFF handlers above.
+		 */
+		n = (s->mode & MODE_KEYS_EXTENDED)     != 0;
+		m = (s->mode & MODE_KEYS_EXTENDED_2)   != 0;
+		if (!n && !m) {
+				input_reply(ictx, "\033[?0u");
+		} else if (m) { /* mode 1 and 2 */
+				input_reply(ictx, "\033[?1;2u");
+		} else { /* mode 1 only */
+				input_reply(ictx, "\033[?1u");
+		}
+		break; 
 	case INPUT_CSI_RM:
 		input_csi_dispatch_rm(ictx);
 		break;
@@ -1988,19 +2038,19 @@ input_csi_dispatch_winops(struct input_ctx *ictx)
 			if (w == NULL)
 				break;
 			input_reply(ictx, "\033[4;%u;%ut", y * w->ypixel,
-			    x * w->xpixel);
+					x * w->xpixel);
 			break;
 		case 15:
 			if (w == NULL)
 				break;
 			input_reply(ictx, "\033[5;%u;%ut", y * w->ypixel,
-			    x * w->xpixel);
+					x * w->xpixel);
 			break;
 		case 16:
 			if (w == NULL)
 				break;
 			input_reply(ictx, "\033[6;%u;%ut", w->ypixel,
-			    w->xpixel);
+					w->xpixel);
 			break;
 		case 18:
 			input_reply(ictx, "\033[8;%u;%ut", y, x);
@@ -2079,7 +2129,7 @@ input_csi_dispatch_sgr_256(struct input_ctx *ictx, int fgbg, u_int *i)
 /* Helper for RGB colour SGR. */
 static int
 input_csi_dispatch_sgr_rgb_do(struct input_ctx *ictx, int fgbg, int r, int g,
-    int b)
+		int b)
 {
 	struct grid_cell	*gc = &ictx->cell.cell;
 
@@ -2190,7 +2240,7 @@ input_csi_dispatch_sgr_colon(struct input_ctx *ictx, u_int i)
 		if (n < i + 3)
 			break;
 		input_csi_dispatch_sgr_rgb_do(ictx, p[0], p[i], p[i + 1],
-		    p[i + 2]);
+				p[i + 2]);
 		break;
 	case 5:
 		if (n < 3)
@@ -2398,6 +2448,89 @@ input_dcs_dispatch(struct input_ctx *ictx)
 		return (0);
 	}
 
+	/* Dispatch DCS sequences with intermediate byte '$' (includes DECRQSS). */
+	if (ictx->interm_len == 1 && ictx->interm_buf[0] == '$') {
+
+		/* DECRQSS: DCS $ q Pt ST */
+		if (len >= 1 && buf[0] == 'q') {
+			/*
+			 * Recognized: $ q SP q  (cursor style query)
+			 * Reply: DCS 1 $ r SP q <Ps> SP q ST
+			 */
+			if (len >= 3 && buf[1] == ' ' && buf[2] == 'q') {
+				struct screen	*scr = sctx->s;
+				int		 ps = 0;
+				int		 explicit_style, blinking;
+
+				explicit_style =
+				    (scr->cstyle == SCREEN_CURSOR_BLOCK) ||
+				    (scr->cstyle == SCREEN_CURSOR_UNDERLINE) ||
+				    (scr->cstyle == SCREEN_CURSOR_BAR);
+
+				if (explicit_style) {
+					if (scr->mode & MODE_CURSOR_BLINKING_SET)
+						blinking = (scr->mode & MODE_CURSOR_BLINKING) != 0;
+					else
+						blinking = 0; /* treat unspecified as steady */
+
+					switch (scr->cstyle) {
+					case SCREEN_CURSOR_BLOCK:
+						ps = blinking ? 1 : 2;
+						break;
+					case SCREEN_CURSOR_UNDERLINE:
+						ps = blinking ? 3 : 4;
+						break;
+					case SCREEN_CURSOR_BAR:
+						ps = blinking ? 5 : 6;
+						break;
+					default:
+						ps = 0;
+						break;
+					}
+				} else {
+					/*
+					 * No explicit runtime style: fall back to the configured
+					 * cursor-style option (integer Ps 0..6). Pane options inherit.
+					 */
+					int opt_ps;
+
+					if (wp != NULL)
+						opt_ps = (int)options_get_number(wp->options, "cursor-style");
+					else
+						opt_ps = (int)options_get_number(global_options, "cursor-style");
+
+					/* Sanity clamp: valid Ps are 0..6 per DECSCUSR. */
+					if (opt_ps < 0 || opt_ps > 6)
+						opt_ps = 0;
+					ps = opt_ps;
+				}
+
+				log_debug("%s: DECRQSS cursor -> Ps=%d (cstyle=%d mode=%#x)",
+				    __func__, ps, scr->cstyle, scr->mode);
+
+				input_reply(ictx, "\033P1$r q%d q\033\\", ps);
+				return (0);
+			}
+			/* 
+			 * Unrecognized DECRQSS ($ q Pt): DCS 0 $ r Pt ST
+			 * kitty, wezterm, and possibly other terminals omit Pt and
+			 * simply reply DCS 0 $ r ST. We closely follow ctlseqs,
+			 * thus returning Pt as well.
+			 */
+			if (len > 1)
+				input_reply(ictx, "\033P0$r%.*s\033\\", (int)(len - 1), buf + 1);
+			else
+				input_reply(ictx, "\033P0$r\033\\");
+			return (0);
+		}
+
+		/*
+		 * Not a DECRQSS ($ q ...). In the current ctlseqs, DCS '$' is only
+		 * used by DECRQSS, but leave other '$' DCS (if any appear in future)
+		 * to existing handlers.
+		 */
+	}
+
 #ifdef ENABLE_SIXEL
 	w = wp->window;
 	if (buf[0] == 'q' && ictx->interm_len == 0) {
@@ -2419,7 +2552,7 @@ input_dcs_dispatch(struct input_ctx *ictx)
 
 	if (len >= prefixlen && strncmp(buf, prefix, prefixlen) == 0) {
 		screen_write_rawstring(sctx, buf + prefixlen, len - prefixlen,
-		    allow_passthrough == 2);
+				allow_passthrough == 2);
 	}
 
 	return (0);
@@ -2451,7 +2584,7 @@ input_exit_osc(struct input_ctx *ictx)
 		return;
 
 	log_debug("%s: \"%s\" (end %s)", __func__, p,
-	    ictx->input_end == INPUT_END_ST ? "ST" : "BEL");
+			ictx->input_end == INPUT_END_ST ? "ST" : "BEL");
 
 	option = 0;
 	while (*p >= '0' && *p <= '9')
@@ -2465,8 +2598,8 @@ input_exit_osc(struct input_ctx *ictx)
 	case 0:
 	case 2:
 		if (wp != NULL &&
-		    options_get_number(wp->options, "allow-set-title") &&
-		    screen_set_title(sctx->s, p)) {
+				options_get_number(wp->options, "allow-set-title") &&
+				screen_set_title(sctx->s, p)) {
 			notify_pane("pane-title-changed", wp);
 			server_redraw_window_borders(wp->window);
 			server_status_window(wp->window);
@@ -2622,7 +2755,7 @@ input_top_bit_set(struct input_ctx *ictx)
 	ictx->utf8started = 0;
 
 	log_debug("%s %hhu '%*s' (width %hhu)", __func__, ud->size,
-	    (int)ud->size, ud->data, ud->width);
+			(int)ud->size, ud->data, ud->width);
 
 	utf8_copy(&ictx->cell.cell.data, ud);
 	screen_write_collect_add(sctx, &ictx->cell.cell);
@@ -2637,20 +2770,20 @@ input_top_bit_set(struct input_ctx *ictx)
 static void
 input_osc_colour_reply(struct input_ctx *ictx, u_int n, int c)
 {
-    u_char	 r, g, b;
-    const char	*end;
+		u_char	 r, g, b;
+		const char	*end;
 
-    if (c != -1)
-	    c = colour_force_rgb(c);
-    if (c == -1)
-	    return;
-    colour_split_rgb(c, &r, &g, &b);
+		if (c != -1)
+			c = colour_force_rgb(c);
+		if (c == -1)
+			return;
+		colour_split_rgb(c, &r, &g, &b);
 
-    if (ictx->input_end == INPUT_END_BEL)
-	    end = "\007";
-    else
-	    end = "\033\\";
-    input_reply(ictx, "\033]%u;rgb:%02hhx%02hhx/%02hhx%02hhx/%02hhx%02hhx%s",
+		if (ictx->input_end == INPUT_END_BEL)
+			end = "\007";
+		else
+			end = "\033\\";
+		input_reply(ictx, "\033]%u;rgb:%02hhx%02hhx/%02hhx%02hhx/%02hhx%02hhx%s",
 	n, r, r, g, g, b, b, end);
 }
 
@@ -2988,7 +3121,7 @@ input_osc_104(struct input_ctx *ictx, const char *p)
 
 void
 input_reply_clipboard(struct bufferevent *bev, const char *buf, size_t len,
-    const char *end)
+		const char *end)
 {
 	char	*out = NULL;
 	int	 outlen = 0;
